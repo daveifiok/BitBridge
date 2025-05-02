@@ -236,3 +236,89 @@
         (ok true)
     )
 )
+
+;; Emergency withdrawal function for protocol safety.
+;; Allows the contract deployer to rescue funds in case of critical vulnerabilities.
+(define-public (emergency-withdraw (amount uint) (recipient principal))
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT-DEPLOYER) (err ERROR-NOT-AUTHORIZED))
+        (asserts! (>= (var-get total-bridged-amount) amount) (err ERROR-INSUFFICIENT-BALANCE))
+        (asserts! (is-valid-principal recipient) (err ERROR-INVALID-RECIPIENT-ADDRESS))
+        
+        (let (
+            (current-balance (default-to u0 (map-get? bridge-balances recipient)))
+            (new-balance (+ current-balance amount))
+        )
+            (asserts! (> new-balance current-balance) (err ERROR-INVALID-AMOUNT))
+            (map-set bridge-balances recipient new-balance)
+            (ok true)
+        )
+    )
+)
+
+;; Read-Only Functions
+
+;; Retrieves the details of a deposit using the transaction hash.
+(define-read-only (get-deposit (tx-hash (buff 32)))
+    (map-get? deposits {tx-hash: tx-hash})
+)
+
+;; Retrieves the current status of the bridge (paused or not).
+(define-read-only (get-bridge-status)
+    (var-get bridge-paused)
+)
+
+;; Checks if a given principal is a validator.
+(define-read-only (get-validator-status (validator principal))
+    (default-to false (map-get? validators validator))
+)
+
+;; Retrieves the bridge balance of a user.
+(define-read-only (get-bridge-balance (user principal))
+    (default-to u0 (map-get? bridge-balances user))
+)
+
+;; Validation Helper Functions
+
+;; Validates if a given principal address is valid.
+(define-read-only (is-valid-principal (address principal))
+    (and
+        (not (is-eq address CONTRACT-DEPLOYER))
+        (not (is-eq address (as-contract tx-sender)))
+    )
+)
+
+;; Validates if a given Bitcoin address is valid.
+(define-read-only (is-valid-btc-address (btc-addr (buff 33)))
+    (and
+        (is-eq (len btc-addr) u33)
+        (not (is-eq btc-addr 0x000000000000000000000000000000000000000000000000000000000000000000))
+        true
+    )
+)
+
+;; Validates if a given transaction hash is valid.
+(define-read-only (is-valid-tx-hash (tx-hash (buff 32)))
+    (and
+        (is-eq (len tx-hash) u32)
+        (not (is-eq tx-hash 0x0000000000000000000000000000000000000000000000000000000000000000))
+        true
+    )
+)
+
+;; Validates if a given signature is valid.
+(define-read-only (is-valid-signature (signature (buff 65)))
+    (and
+        (is-eq (len signature) u65)
+        (not (is-eq signature 0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000))
+        true
+    )
+)
+
+;; Validates if a given deposit amount is within the allowed range.
+(define-read-only (validate-deposit-amount (amount uint))
+    (and
+        (>= amount MIN-DEPOSIT-AMOUNT)
+        (<= amount MAX-DEPOSIT-AMOUNT)
+    )
+)
