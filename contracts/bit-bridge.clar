@@ -154,3 +154,85 @@
         )
     )
 )
+
+;; Confirms a deposit with validator signature.
+;; Multiple validators must confirm the same deposit to reach the required threshold.
+(define-public (confirm-deposit
+    (tx-hash (buff 32))
+    (signature (buff 65))
+)
+    (let (
+        (deposit (unwrap! (map-get? deposits {tx-hash: tx-hash}) (err ERROR-INVALID-BRIDGE-STATUS)))
+        (is-validator (get-validator-status tx-sender))
+    )
+        (asserts! (not (var-get bridge-paused)) (err ERROR-BRIDGE-PAUSED))
+        (asserts! (is-valid-tx-hash tx-hash) (err ERROR-INVALID-TX-HASH))
+        (asserts! (is-valid-signature signature) (err ERROR-INVALID-SIGNATURE-FORMAT))
+        (asserts! (not (get processed deposit)) (err ERROR-ALREADY-PROCESSED))
+        (asserts! (>= (get confirmations deposit) REQUIRED-CONFIRMATIONS) (err ERROR-INVALID-BRIDGE-STATUS))
+        
+        (asserts!
+            (is-none (map-get? validator-signatures {tx-hash: tx-hash, validator: tx-sender}))
+            (err ERROR-ALREADY-PROCESSED)
+        )
+        
+        (let
+            ((validated-signature {
+                signature: signature,
+                timestamp: stacks-block-height
+            }))
+            
+            (map-set validator-signatures
+                {tx-hash: tx-hash, validator: tx-sender}
+                validated-signature
+            )
+            
+            (map-set deposits
+                {tx-hash: tx-hash}
+                (merge deposit {processed: true})
+            )
+            
+            (map-set bridge-balances
+                (get recipient deposit)
+                (+ (default-to u0 (map-get? bridge-balances (get recipient deposit)))
+                   (get amount deposit))
+            )
+            
+            (var-set total-bridged-amount
+                (+ (var-get total-bridged-amount) (get amount deposit))
+            )
+            (ok true)
+        )
+    )
+)
+
+;; Withdraws an amount from the bridge to a Bitcoin recipient address.
+;; Users call this function to initiate transfers from Stacks back to Bitcoin.
+(define-public (withdraw
+    (amount uint)
+    (btc-recipient (buff 34))
+)
+    (let (
+        (current-balance (get-bridge-balance tx-sender))
+    )
+        (asserts! (not (var-get bridge-paused)) (err ERROR-BRIDGE-PAUSED))
+        (asserts! (>= current-balance amount) (err ERROR-INSUFFICIENT-BALANCE))
+        (asserts! (validate-deposit-amount amount) (err ERROR-INVALID-AMOUNT))
+        
+        (map-set bridge-balances
+            tx-sender
+            (- current-balance amount)
+        )
+        
+        (print {
+            type: "withdraw",
+            sender: tx-sender,
+            amount: amount,
+            btc-recipient: btc-recipient,
+            timestamp: stacks-block-height
+        })
+        
+        (var-set total-bridged-amount (- (var-get total-bridged-amount) amount))
+        (ok true)
+    )
+)
